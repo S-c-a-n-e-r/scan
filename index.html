@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="uk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Сканер серійних номерів</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:#020617;color:#e2e8f0;font:14px/1.35 -apple-system,system-ui,Segoe UI,Roboto,sans-serif}
+#app{display:flex;flex-direction:column;height:100%}
+#top{padding:10px 12px;background:#0f172a;border-bottom:1px solid #1e293b}
+#top b{color:#fff}#top small{color:#94a3b8;display:block}
+#cam{position:relative;flex:1;min-height:180px;background:#000;overflow:hidden}
+video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#frame{position:absolute;left:7%;right:7%;top:34%;height:28%;border:2px solid #34d399;border-radius:12px;box-shadow:0 0 0 9999px rgba(0,0,0,.45)}
+#st{padding:8px 12px;min-height:38px;font:13px ui-monospace,Menlo,monospace;background:#020617}
+#ls{max-height:22vh;overflow:auto;padding:0 12px 6px;display:flex;flex-wrap:wrap;gap:6px}
+.chip{padding:3px 8px;border-radius:8px;background:#1e293b;border:1px solid #334155;font:12px ui-monospace,Menlo,monospace}
+.chip.bad{border-color:#be123c;color:#fda4af}
+#bt{display:flex;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:#0f172a;border-top:1px solid #1e293b}
+button{flex:1;padding:13px;border:0;border-radius:10px;font-weight:700;font-size:14px;color:#fff;background:#334155}
+#done{background:#10b981}#man{display:flex;gap:6px;padding:0 12px 8px}
+#man input{flex:1;padding:10px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#fff;font:14px ui-monospace,Menlo,monospace}
+#man button{flex:0 0 auto;padding:10px 14px}
+.ok{color:#34d399}.er{color:#fb7185}.wr{color:#fbbf24}
+</style></head><body><div id="app">
+<div id="top"><b id="ttl">Скануйте штрихкод серійного номера</b><small id="sub"></small></div>
+<div id="cam"><video id="v" playsinline muted autoplay></video><div id="frame"></div></div>
+<div id="st">Запуск камери…</div><div id="ls"></div>
+<div id="man"><input id="mi" placeholder="Або введіть номер вручну" autocomplete="off" autocapitalize="characters"><button id="ma">Додати</button></div>
+<div id="bt"><button id="cp">Скопіювати все</button><button id="done">Готово</button></div></div>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search), sid = q.get('sid') || '', item = q.get('item') || '', exp = q.get('exp');
+  var $ = function (i) { return document.getElementById(i); }, st = $('st'), ls = $('ls'), list = [], last = '', lastT = 0, linked = !!(window.opener && !window.opener.closed), pend = {};
+  $('sub').textContent = (item ? item + ' · ' : '') + (exp ? 'очікується ' + exp : '');
+  function say(h, c) { st.innerHTML = '<span class="' + (c || '') + '">' + h + '</span>'; }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function norm(v) { return String(v == null ? '' : v).replace(/\s+/g, '').toUpperCase(); }
+  function chip(c, bad) { var s = document.createElement('span'); s.className = 'chip' + (bad ? ' bad' : ''); s.textContent = c; ls.appendChild(s); ls.scrollTop = 1e6; }
+  function vib(ok) { try { navigator.vibrate && navigator.vibrate(ok ? 80 : [60, 60, 60]); } catch (e) {} }
+  if (!linked) say('Немає звʼязку із застосунком: збирайте номери й натисніть «Скопіювати все», потім вставте в поле.', 'wr');
+  window.addEventListener('message', function (e) {
+    if (!linked || e.source !== window.opener || !e.data || e.data.vsn !== 'res') return;
+    var p = pend[e.data.code]; if (p) { clearTimeout(p); delete pend[e.data.code]; }
+    if (e.data.ok) { list.push(e.data.code); chip(e.data.code); say('✓ ' + esc(e.data.code) + ' · відскановано: ' + e.data.count + (e.data.exp != null ? ' із ' + e.data.exp : ''), 'ok'); vib(true); }
+    else { chip(e.data.code, true); say(esc(e.data.msg || 'Не додано'), 'er'); vib(false); }
+  });
+  function got(raw) {
+    var c = norm(raw), now = Date.now(); if (!c || (c === last && now - lastT < 2500)) return; last = c; lastT = now;
+    if (list.indexOf(c) >= 0) { say('Уже відскановано: ' + esc(c), 'wr'); vib(false); return; }
+    if (linked) {
+      try { window.opener.postMessage({ vsn: 'code', sid: sid, code: c }, '*'); say('Перевірка ' + esc(c) + '…'); pend[c] = setTimeout(function () { delete pend[c]; say('Застосунок не відповідає. Поверніться в нього й перевірте, чи відкрите вікно введення.', 'wr'); }, 4000); }
+      catch (err) { linked = false; list.push(c); chip(c); say('✓ ' + esc(c) + ' (без звʼязку)', 'wr'); }
+    } else { list.push(c); chip(c); say('✓ ' + esc(c) + ' · зібрано: ' + list.length, 'ok'); vib(true); }
+  }
+  $('ma').onclick = function () { var v = $('mi').value; $('mi').value = ''; v.split(/[\s,;]+/).forEach(function (x) { if (x) { last = ''; got(x); } }); };
+  $('mi').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('ma').click(); });
+  $('cp').onclick = function () { var t = list.join('\n'); if (!t) return say('Нічого копіювати', 'wr'); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { say('Скопійовано: ' + list.length, 'ok'); }, function () { var a = document.createElement('textarea'); a.value = t; document.body.appendChild(a); a.select(); try { document.execCommand('copy'); say('Скопійовано: ' + list.length, 'ok'); } catch (e) { say('Не вдалось скопіювати', 'er'); } a.remove(); }); };
+  $('done').onclick = function () { try { window.close(); } catch (e) {} setTimeout(function () { say('Поверніться у застосунок (перемкніть вкладку або застосунок).', 'wr'); }, 300); };
+  var stream = null, reader = null;
+  function loadZ() { return new Promise(function (res, rej) { if (window.ZXing) return res(); var s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
+  function fail(e) { say('Не вдалось відкрити камеру: ' + esc((e && (e.message || e.name)) || '') + '. Дозвольте камеру для цієї сторінки або введіть номер вручну.', 'er'); }
+  async function start() {
+    var v = $('v');
+    try {
+      if ('BarcodeDetector' in window) {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false }); v.srcObject = stream; await v.play().catch(function () {});
+        var fm = []; try { fm = await BarcodeDetector.getSupportedFormats(); } catch (e) {}
+        var want = ['code_128', 'code_39', 'code_93', 'ean_13', 'ean_8', 'upc_a', 'itf', 'codabar', 'qr_code', 'data_matrix'].filter(function (x) { return !fm.length || fm.indexOf(x) >= 0; }), det = new BarcodeDetector({ formats: want }), busy = false;
+        say('Наведіть рамку на штрихкод');
+        setInterval(async function () { if (busy || v.readyState < 2) return; busy = true; try { var r = await det.detect(v); if (r && r[0]) got(r[0].rawValue); } catch (e) {} busy = false; }, 220);
+      } else {
+        await loadZ(); var Z = window.ZXing, h = new Map(); h.set(Z.DecodeHintType.TRY_HARDER, true); reader = new Z.BrowserMultiFormatReader(h, 300);
+        say('Наведіть рамку на штрихкод');
+        reader.decodeFromConstraints({ video: { facingMode: { ideal: 'environment' } }, audio: false }, v, function (r) { if (r) got(r.getText()); });
+      }
+    } catch (e) { fail(e); }
+  }
+  start();
+  if (linked) { try { window.opener.postMessage({ vsn: 'hello', sid: sid }, '*'); } catch (e) {} }
+})();
+</script></body></html>
